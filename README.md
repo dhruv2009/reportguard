@@ -1,12 +1,12 @@
 # ReportGuard
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/YOUR_GITHUB_USERNAME/reportguard/blob/main/ReportGuard_Colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dhruv2009/reportguard/blob/main/ReportGuard_Colab.ipynb)
 
 Checks the numbers in a business report (PDF + dashboard screenshot) against the database. Each
 number gets mapped to a metric definition and recomputed with SQL. When one doesn't match, an agent
 works out the cause and shows the query that reproduces the wrong value.
 
-Built with MCP, a multi-agent pipeline and Gemini (free tier). Also runs with Ollama or Claude.
+Built with MCP, a multi-agent pipeline and Gemini. Also runs with Ollama or Claude.
 
 ## How it works
 
