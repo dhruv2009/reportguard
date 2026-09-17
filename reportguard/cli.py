@@ -41,8 +41,8 @@ async def evaluate(provider_name: str, cache: str, include_single: bool, min_int
         scores.append(score_run(result))
         print(f"saved {path}")
     card = scorecard_markdown(scores)
-    (config.RUNS_DIR / "scorecard.md").write_text(card)
-    (config.RUNS_DIR / "scores.json").write_text(json.dumps(scores, indent=1))
+    (config.RUNS_DIR / "scorecard.md").write_text(card, encoding="utf-8")
+    (config.RUNS_DIR / "scores.json").write_text(json.dumps(scores, indent=1), encoding="utf-8")
     return scores, card
 
 
@@ -65,7 +65,7 @@ def main() -> None:
         print(json.dumps(setup(), indent=2))
     elif a.cmd == "run":
         result, path = asyncio.run(run(a.provider, a.cache, a.mode, a.pack, a.min_interval))
-        print((path / "qa_report.md").read_text())
+        print((path / "qa_report.md").read_text(encoding="utf-8"))
     else:
         _, card = asyncio.run(evaluate(a.provider, a.cache, a.with_single, a.min_interval))
         print(card)

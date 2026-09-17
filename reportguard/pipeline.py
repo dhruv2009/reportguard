@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mcp import Client, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp.client.stdio import get_default_environment, stdio_client
 
 from . import config
 from .agents import AgentConfig, Tracer, build_system_prompt, mcp_result_text, mcp_tools_to_specs, run_agent
@@ -69,9 +69,8 @@ class RunResult:
 
 
 def server_params() -> StdioServerParameters:
-    import os
-    env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "SYSTEMROOT", "LANG", "PYTHONPATH")}
-    env["RG_DATA_DIR"] = str(config.DATA_DIR)
+    env = get_default_environment()
+    env.update({"RG_DATA_DIR": str(config.DATA_DIR), "PYTHONUTF8": "1"})
     return StdioServerParameters(command=sys.executable, args=[str(config.PROJECT_ROOT / "run_server.py")], env=env)
 
 
@@ -431,8 +430,8 @@ def save_run(result: RunResult, name: str | None = None) -> Path:
     from .qa_report import render_markdown
     run_dir = config.RUNS_DIR / (name or f"{time.strftime('%Y%m%d-%H%M%S')}_{result.mode}_{result.pack}")
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "result.json").write_text(json.dumps(result.to_json(), indent=1, default=str))
-    (run_dir / "qa_report.md").write_text(render_markdown(result))
+    (run_dir / "result.json").write_text(json.dumps(result.to_json(), indent=1, default=str), encoding="utf-8")
+    (run_dir / "qa_report.md").write_text(render_markdown(result), encoding="utf-8")
     if result.error_traceback:
-        (run_dir / "error.txt").write_text(result.error_traceback)
+        (run_dir / "error.txt").write_text(result.error_traceback, encoding="utf-8")
     return run_dir

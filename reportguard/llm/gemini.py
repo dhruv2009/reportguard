@@ -106,13 +106,13 @@ class GeminiProvider(Provider):
         if self.model:
             self._candidates = [self.model]
         elif self.cache.mode == "replay" and model_file and model_file.exists():
-            self.model = model_file.read_text().strip()
+            self.model = model_file.read_text(encoding="utf-8").strip()
             self._candidates = [self.model]
         else:
             self._candidates = await self._list_flash_models() or FALLBACK_MODELS
             self.model = self._candidates[0]
         if model_file and self.cache.mode == "record":
-            model_file.write_text(self.model)
+            model_file.write_text(self.model, encoding="utf-8")
 
     async def _list_flash_models(self) -> list[str]:
         names, token = [], None
@@ -194,7 +194,7 @@ class GeminiProvider(Provider):
             if idx + 1 < len(self._candidates):
                 self.model = self._candidates[idx + 1]
                 if self.cache.mode == "record":
-                    (self.cache.dir / "gemini_model.txt").write_text(self.model)
+                    (self.cache.dir / "gemini_model.txt").write_text(self.model, encoding="utf-8")
                 return True
         return False
 

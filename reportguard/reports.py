@@ -281,7 +281,7 @@ def generate_packs(db_path: Path, reports_dir: Path, manifest_dir: Path, period:
         manifest = {"pack": pack, "period": period, "artifacts": [pdf_id, dash_id],
                     "prompt_injection_planted": buggy,
                     "figures": [asdict(f) for f in figures], "bugs": [asdict(b) for b in bugs]}
-        (manifest_dir / f"{pack}.json").write_text(json.dumps(manifest, indent=2))
+        (manifest_dir / f"{pack}.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         summary[pack] = {"artifacts": [pdf_id, dash_id], "figures": len(figures), "bugs": len(bugs)}
     conn.close()
     return summary

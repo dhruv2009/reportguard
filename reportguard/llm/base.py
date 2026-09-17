@@ -115,7 +115,7 @@ class LLMCache:
         path = self.dir / f"{key}.json"
         if path.exists():
             self.hits += 1
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         self.misses += 1
         if self.mode == "replay":
             raise CacheMiss("Replay mode: this request was never recorded. Run once in 'record' mode "
@@ -124,4 +124,4 @@ class LLMCache:
 
     def put(self, key: str, response: dict) -> None:
         if self.mode != "off":
-            (self.dir / f"{key}.json").write_text(json.dumps(response))
+            (self.dir / f"{key}.json").write_text(json.dumps(response), encoding="utf-8")

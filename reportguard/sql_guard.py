@@ -18,7 +18,7 @@ class SqlRejected(ValueError):
 
 
 def connect_readonly(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True, check_same_thread=False)
+    conn = sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False)
     return conn
 
 

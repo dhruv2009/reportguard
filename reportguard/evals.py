@@ -29,7 +29,7 @@ def _as_dict(result) -> dict:
 
 def score_run(result, manifest_dir=config.MANIFEST_DIR) -> dict:
     r = _as_dict(result)
-    manifest = json.loads((manifest_dir / f"{r['pack']}.json").read_text())
+    manifest = json.loads((manifest_dir / f"{r['pack']}.json").read_text(encoding="utf-8"))
     bugs = manifest["bugs"]
 
     issues = [i for i in r["issues"] if i.get("verdict") != "rejected"]

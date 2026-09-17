@@ -24,7 +24,7 @@ class AgentFailed(RuntimeError):
 
 def load_skill_sections(path=config.SKILL_PATH) -> dict[str, str]:
     """Split SKILL.md into sections keyed by their '## ' heading."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     body = text.split("---", 2)[2] if text.startswith("---") else text
     sections, current, lines = {}, "_intro", []
     for line in body.splitlines():
