@@ -350,3 +350,20 @@ def test_report_escapes_dollar_signs_outside_code():
     out = _escape_dollars(md)
     assert "(\\$K) | \\$28,782 | \\$565,250" in out
     assert "SELECT '$x'" in out and "`$code`" in out
+
+
+def test_demo_page_builds_from_replayed_runs(tmp_path, monkeypatch):
+    from reportguard import site
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    fake = FakeGemini()
+
+    async def record_all():
+        for runner, pack in ((run_multi_agent, "buggy"), (run_multi_agent, "clean"), (run_single_agent, "buggy")):
+            result = await runner(_gemini(fake, tmp_path / "gemini", "record"), pack, verbose=False)
+            assert result.error is None, result.error
+    run(record_all())
+    n_calls = len(fake.requests)
+    out = run(site.build_demo_page(tmp_path / "docs" / "index.html"))
+    page = out.read_text(encoding="utf-8")
+    assert len(fake.requests) == n_calls                      # built from cache only
+    assert "data:image/png;base64," in page and "What it found" in page and "<table>" in page

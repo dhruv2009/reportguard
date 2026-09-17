@@ -1,6 +1,7 @@
 """    python -m reportguard.cli setup
     python -m reportguard.cli run --pack buggy [--mode single] [--provider mock] [--cache replay]
     python -m reportguard.cli eval [--with-single]
+    python -m reportguard.cli site                  (demo page from recorded runs, no API calls)
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="reportguard")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("setup")
+    sub.add_parser("site")
     for name in ("run", "eval"):
         s = sub.add_parser(name)
         s.add_argument("--provider", default="gemini", choices=["gemini", "ollama", "claude", "mock"])
@@ -63,6 +65,9 @@ def main() -> None:
     a = p.parse_args()
     if a.cmd == "setup":
         print(json.dumps(setup(), indent=2))
+    elif a.cmd == "site":
+        from .site import build_demo_page
+        print("Wrote", asyncio.run(build_demo_page()))
     elif a.cmd == "run":
         result, path = asyncio.run(run(a.provider, a.cache, a.mode, a.pack, a.min_interval))
         print((path / "qa_report.md").read_text(encoding="utf-8"))

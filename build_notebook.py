@@ -199,6 +199,17 @@ if RUN_OLLAMA:
 else:
     pass"""))
 
+cells.append(md("## Demo page"))
+cells.append(code("""from reportguard.site import build_demo_page
+try:
+    page = await build_demo_page()
+    print(page)
+    if IN_COLAB:
+        from google.colab import files
+        files.download(str(page))
+except Exception as exc:
+    print("demo page not built:", exc)"""))
+
 cells.append(md("## Download"))
 cells.append(code("""import shutil
 archive = shutil.make_archive("/content/reportguard_project", "zip", root_dir="/content", base_dir="reportguard")

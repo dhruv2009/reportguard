@@ -1,12 +1,14 @@
 # ReportGuard
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dhruv2009/reportguard/blob/main/ReportGuard_Colab.ipynb)
+**Demo page:** https://dhruv2009.github.io/reportguard
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/YOUR_GITHUB_USERNAME/reportguard/blob/main/ReportGuard_Colab.ipynb)
 
 Checks the numbers in a business report (PDF + dashboard screenshot) against the database. Each
 number gets mapped to a metric definition and recomputed with SQL. When one doesn't match, an agent
 works out the cause and shows the query that reproduces the wrong value.
 
-Built with MCP, a multi-agent pipeline and Gemini. Also runs with Ollama or Claude.
+Built with MCP, a multi-agent pipeline and Gemini (free tier). Also runs with Ollama or Claude.
 
 ## How it works
 
@@ -118,6 +120,9 @@ Other options:
 Responses are cached under `data/llm_cache/`. Calls are spaced out (`--min-interval`, default 6.5s)
 to stay under the free tier's per-minute limit.
 
+`python -m reportguard.cli site` rebuilds `docs/index.html` (the demo page) from the recorded runs without
+calling the API.
+
 `ReportGuard_Colab.ipynb` runs everything in Colab. Add `GEMINI_API_KEY` under Secrets first. It's
 generated from the repo with `python build_notebook.py`.
 
@@ -192,6 +197,7 @@ reportguard/
   reports.py              report packs + manifests
   evals.py                scoring
   qa_report.py            markdown report
+  site.py                 demo page (docs/index.html)
   cli.py
   llm/                    gemini, anthropic, openai_compat (ollama), mock
 skills/report-qa/         skill file
