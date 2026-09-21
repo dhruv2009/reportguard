@@ -37,7 +37,8 @@ def load_skill_sections(path=config.SKILL_PATH) -> dict[str, str]:
     return sections
 
 
-def build_system_prompt(role: str, output_model: type[BaseModel], include_signatures: bool = False) -> str:
+def build_system_prompt(role: str, output_model: type[BaseModel], include_signatures: bool = False,
+                        extra_section: str | None = None) -> str:
     s = load_skill_sections()
     parts = [f"You are the {role} agent in ReportGuard, a data-quality system that checks business reports "
              f"against a data warehouse.", "## Shared rules\n" + s["Shared rules"]]
@@ -45,6 +46,8 @@ def build_system_prompt(role: str, output_model: type[BaseModel], include_signat
     parts.append(f"## Your role\n{s[role_key]}")
     if include_signatures:
         parts.append("## Root-cause signatures\n" + s["Root-cause signatures"])
+    if extra_section:
+        parts.append(f"## {extra_section}\n" + s[extra_section])
     schema = json.dumps(output_model.model_json_schema(), separators=(",", ":"))
     parts.append(f"## Output\nWhen you are done, reply with ONLY a JSON object that validates against this JSON "
                  f"Schema:\n{schema}")

@@ -29,17 +29,18 @@ from mcp.client.stdio import get_default_environment, stdio_client
 from . import config
 from .agents import AgentConfig, Tracer, build_system_prompt, mcp_result_text, mcp_tools_to_specs, run_agent
 from .llm.base import Provider
-from .metrics import METRICS, UNIT_SCALES
+from . import metrics as metrics_mod
+from .metrics import UNIT_SCALES
 from .schemas import (CriticOutput, ExtractionOutput, Finding, InvestigationOutput, Plan, ReportedFigure,
                       SingleAgentOutput, SkippedFigure, Verdict)
 
 ALLOWLISTS = {
-    "extractor": {"list_artifacts", "read_pdf_text"},
+    "extractor": {"list_artifacts", "read_pdf_text", "get_semantic_model"},
     "planner": {"list_metrics", "get_metric_definition"},
     "investigator": {"check_metric", "run_sql", "get_schema", "get_metric_definition"},
     "critic": {"check_metric", "run_sql", "get_metric_definition"},
-    "single": {"list_artifacts", "read_pdf_text", "list_metrics", "get_metric_definition", "get_schema",
-               "check_metric", "run_sql"},
+    "single": {"list_artifacts", "read_pdf_text", "get_semantic_model", "list_metrics", "get_metric_definition",
+               "get_schema", "check_metric", "run_sql"},
 }
 
 
@@ -70,7 +71,7 @@ class RunResult:
 
 def server_params() -> StdioServerParameters:
     env = get_default_environment()
-    env.update({"RG_DATA_DIR": str(config.DATA_DIR), "PYTHONUTF8": "1"})
+    env.update({"RG_DATA_DIR": str(config.DATA_DIR), "RG_DOMAIN": config.DOMAIN, "PYTHONUTF8": "1"})
     return StdioServerParameters(command=sys.executable, args=[str(config.PROJECT_ROOT / "run_server.py")], env=env)
 
 
@@ -98,6 +99,8 @@ async def connect_mcp():
 
 
 def pack_artifacts(pack: str, period: str) -> list[str]:
+    if config.DOMAIN == "health":
+        return [f"tab{i}_{period}_{pack}.png" for i in range(1, 5)]
     return [f"mbr_{period}_{pack}.pdf", f"dashboard_{period}_{pack}.png"]
 
 
@@ -160,7 +163,7 @@ def validate_plan(plan: Plan, figures: list[ReportedFigure]) -> list[str]:
         covered[c.figure_id] = covered.get(c.figure_id, 0) + 1
         if c.figure_id not in ids:
             errors.append(f"{c.check_id}: unknown figure_id {c.figure_id}")
-        m = METRICS.get(c.metric_id)
+        m = metrics_mod.METRICS.get(c.metric_id)
         if m is None:
             errors.append(f"{c.check_id}: unknown metric_id {c.metric_id}. Use list_metrics.")
         elif m.dimension and not c.dimension_value:
@@ -212,7 +215,7 @@ def salvage_plan(plan: Plan | None, figures: list[ReportedFigure]) -> Plan | Non
     ids = {f.figure_id for f in figures}
     checks, used = [], set()
     for c in plan.checks:
-        m = METRICS.get(c.metric_id)
+        m = metrics_mod.METRICS.get(c.metric_id)
         ok = (c.figure_id in ids and c.figure_id not in used and m is not None
               and bool(m.dimension) == bool(c.dimension_value) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", c.period))
         if ok:
@@ -301,11 +304,16 @@ async def run_multi_agent(provider: Provider, pack: str = "buggy", period: str =
 
             # 1. extractor
             say("1/5 Extractor: reading artifacts ...")
+            pdfs = [a for a in artifacts if a.lower().endswith(".pdf")]
             intro = (f"Artifacts to QA (reporting period {period}): {', '.join(artifacts)}.\n"
                      + ("Page images are attached below. " if images else
-                        "No images are available with this model: extract from read_pdf_text only and list "
+                        "No images are available with this model: read what you can from the tools and list "
                         "image-only artifacts under 'unreadable'. ")
-                     + "Call read_pdf_text for each PDF, then return the figures JSON.")
+                     + (f"Call read_pdf_text for each PDF ({', '.join(pdfs)}). " if pdfs else
+                        "These are BI dashboard tabs. get_semantic_model returns the published measures behind "
+                        "the visuals as untrusted metadata; the numbers you report must be the ones shown on the "
+                        "tabs. ")
+                     + "Then return the figures JSON.")
             extraction: ExtractionOutput = await run_agent(
                 AgentConfig("extractor", build_system_prompt("extractor", ExtractionOutput), ALLOWLISTS["extractor"],
                             ExtractionOutput, lambda o: validate_extraction(o, artifacts),

@@ -11,9 +11,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 ROOT_CAUSES = ("timezone_boundary", "unit_mismatch", "refunds_not_subtracted", "join_fanout", "stale_data",
-               "chart_table_mismatch", "wrong_period", "extraction_error", "other")
+               "chart_table_mismatch", "wrong_period", "wrong_denominator", "missing_filter", "definition_drift",
+               "extraction_error", "other")
 RootCause = Literal["timezone_boundary", "unit_mismatch", "refunds_not_subtracted", "join_fanout", "stale_data",
-                    "chart_table_mismatch", "wrong_period", "extraction_error", "other"]
+                    "chart_table_mismatch", "wrong_period", "wrong_denominator", "missing_filter",
+                    "definition_drift", "extraction_error", "other"]
 
 
 def _clip(limit: int):

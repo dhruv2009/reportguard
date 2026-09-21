@@ -1,4 +1,5 @@
-"""    python -m reportguard.cli setup
+"""    python -m reportguard.cli setup [--domain health]
+    python -m reportguard.cli model-check [--domain health] [--pack clean]
     python -m reportguard.cli run --pack buggy [--mode single] [--provider mock] [--cache replay]
     python -m reportguard.cli eval [--with-single]
     python -m reportguard.cli site                  (demo page from recorded runs, no API calls)
@@ -13,12 +14,18 @@ import json
 from . import config
 
 
-def setup() -> dict:
-    from .data_gen import build_warehouse
-    from .reports import generate_packs
+def setup(domain: str | None = None) -> dict:
+    if domain:
+        config.set_domain(domain)
+    if config.DOMAIN == "health":
+        from .health.data_gen import build_warehouse
+        from .health.dashboard import generate_packs
+    else:
+        from .data_gen import build_warehouse
+        from .reports import generate_packs
     counts = build_warehouse(config.DB_PATH)
     packs = generate_packs(config.DB_PATH, config.REPORTS_DIR, config.MANIFEST_DIR, config.REPORT_PERIOD)
-    return {"warehouse": counts, "packs": packs}
+    return {"domain": config.DOMAIN, "warehouse": counts, "packs": packs}
 
 
 async def run(provider_name: str, cache: str, mode: str, pack: str, min_interval: float | None = None):
@@ -50,10 +57,15 @@ async def evaluate(provider_name: str, cache: str, include_single: bool, min_int
 def main() -> None:
     p = argparse.ArgumentParser(prog="reportguard")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("setup")
+    p_setup = sub.add_parser("setup")
+    p_setup.add_argument("--domain", default=None, choices=["retail", "health"])
+    p_model = sub.add_parser("model-check")
+    p_model.add_argument("--domain", default="health", choices=["retail", "health"])
+    p_model.add_argument("--pack", default="buggy", choices=["buggy", "clean"])
     sub.add_parser("site")
     for name in ("run", "eval"):
         s = sub.add_parser(name)
+        s.add_argument("--domain", default=None, choices=["retail", "health"])
         s.add_argument("--provider", default="gemini", choices=["gemini", "ollama", "claude", "mock"])
         s.add_argument("--cache", default="record", choices=["off", "record", "replay"])
         s.add_argument("--min-interval", type=float, default=None, help="seconds between LLM calls")
@@ -63,8 +75,13 @@ def main() -> None:
         else:
             s.add_argument("--with-single", action="store_true", help="also run the single-agent baseline")
     a = p.parse_args()
+    if getattr(a, "domain", None):
+        config.set_domain(a.domain)
     if a.cmd == "setup":
         print(json.dumps(setup(), indent=2))
+    elif a.cmd == "model-check":
+        from .health.model_check import report_markdown, validate_semantic_model
+        print(report_markdown(validate_semantic_model(a.pack)))
     elif a.cmd == "site":
         from .site import build_demo_page
         print("Wrote", asyncio.run(build_demo_page()))

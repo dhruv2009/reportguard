@@ -1,5 +1,8 @@
 """Rule-based mock provider for tests and runs without an API key.
 
+It can't see images, so on a BI dashboard pack it reads the published measures through
+get_semantic_model instead of the rendered tabs.
+
 Calls the real MCP tools. The planner's first answer drops a figure and the
 investigator calls a tool it isn't allowed to use, so the repair loop and the
 allowlist check get exercised.
@@ -54,8 +57,25 @@ class MockChat(Chat):
         if self.turn == 0:
             self.memory["pdfs"] = sorted(set(re.findall(r"[\w\-]+\.pdf", text)))
             self.memory["pngs"] = sorted(set(re.findall(r"[\w\-]+\.png", text)))
+            if not self.memory["pdfs"]:   # BI dashboard: read the published measures instead of the tabs
+                return self._reply(calls=[ToolCall("x0", "get_semantic_model",
+                                                   {"artifact_id": self.memory["pngs"][0]})])
             return self._reply(calls=[ToolCall(f"x{i}", "read_pdf_text", {"artifact_id": a})
                                       for i, a in enumerate(self.memory["pdfs"])])
+        if not self.memory["pdfs"]:
+            model = json.loads(results[0].content)
+            figures = []
+            for n, m in enumerate(model["measures"], start=1):
+                unit = "$" if m["format_string"].startswith("$") else ("%" if "%" in m["format_string"] else "")
+                dec = 2 if unit in ("$", "%") or "." in m["format_string"] else 0
+                tab = model["tabs"].index(m["tab"]) + 1
+                figures.append({"figure_id": f"F{n}", "artifact_id": f"tab{tab}_{model['period']}_"
+                                f"{self.memory['pngs'][0].split('_')[-1]}", "location": m["visual"],
+                                "label": m["measure"], "displayed_text": f"{m['published_value']:.{dec}f}",
+                                "value": round(m["published_value"], dec), "unit_label": unit,
+                                "display_decimals": dec, "period_label": model["period"],
+                                "notes": f"measure={m['metric_id']}|{m['dimension_value'] or ''}"})
+            return self._reply(json.dumps({"figures": figures, "security_notes": [], "unreadable": []}))
         from ..pipeline import parse_display
         figures, notes, n = [], [], 0
         for r in results:
@@ -88,6 +108,12 @@ class MockChat(Chat):
             return self._reply(calls=[ToolCall("p0", "list_metrics", {})])
         checks, skipped = [], []
         for f in self.memory["figures"]:
+            if (f.get("notes") or "").startswith("measure="):     # BI pack: the model names the metric
+                mid, _, dim = (f["notes"].removeprefix("measure=")).partition("|")
+                checks.append({"check_id": f"C{len(checks) + 1}", "figure_id": f["figure_id"], "metric_id": mid,
+                               "dimension_value": dim or None, "period": self.memory["period"],
+                               "reason": "from semantic model"})
+                continue
             label = f["label"].lower()
             cat = next((c for c in CATEGORIES if c.lower() in label), None)
             metric = "CATEGORY_REVENUE" if cat else next((m for k, m in KEYWORDS if k in label), None)

@@ -105,6 +105,12 @@ You challenge findings before they reach a human. False alarms erode trust in QA
   check_metric for the previous and next month.
 - chart_table_mismatch: a chart label disagrees with the database while the table cell for
   the same category on the same page passes.
+- wrong_denominator: a per-member or per-unit figure is off by a steady ratio. Test: recompute with a
+  different denominator (all rows instead of the filtered population) and see if it reproduces the number.
+- missing_filter: a count is too high and recomputing without one filter (open, active, completed)
+  reproduces it exactly.
+- definition_drift: the number is reproducible with a near neighbour of the governed definition, for example
+  a rate that was never annualized, or a numerator that counts a wider set of events than the definition allows.
 - extraction_error: the reported figure does not match its own displayed_text.
 - other: none of the above is supported by evidence.
 

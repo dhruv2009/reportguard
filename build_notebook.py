@@ -41,7 +41,7 @@ if IN_COLAB and USE_DRIVE_FOR_CACHE:
     drive.mount("/content/drive")
     cache_dir = "/content/drive/MyDrive/reportguard_llm_cache"
 os.environ["RG_CACHE_DIR"] = cache_dir
-for d in ["reportguard/llm", "skills/report-qa", "tests"]:
+for d in ["reportguard/llm", "reportguard/health", "skills/report-qa", "tests"]:
     os.makedirs(f"{PROJECT}/{d}", exist_ok=True)
 print(PROJECT, cache_dir)"""))
 
@@ -209,6 +209,48 @@ try:
         files.download(str(page))
 except Exception as exc:
     print("demo page not built:", exc)"""))
+
+cells.append(md("""## BI dashboard: population health
+
+Same engine pointed at a different domain: a four-tab embedded BI report (population overview, utilization,
+quality measures, cost & regions) with 45 displayed numbers, 31 published measures and 8 planted bugs."""))
+cells.append(code("""config.set_domain("health")
+from reportguard.cli import setup as rg_setup
+print(json.dumps(rg_setup(), indent=1))
+for i in range(1, 5):
+    display(Image(filename=str(config.REPORTS_DIR / f"tab{i}_2026-08_buggy.png"), width=980))"""))
+
+cells.append(md("""### Path 1: check the published measures against the warehouse
+
+Pure code, no model calls. This is what scales to a report with hundreds of measures."""))
+cells.append(code("""from reportguard.health.model_check import compare_paths, report_markdown, validate_semantic_model
+
+model_buggy = validate_semantic_model("buggy")
+model_clean = validate_semantic_model("clean")
+display(Markdown(report_markdown(model_buggy)))
+print("clean pack:", model_clean["passed"], "of", model_clean["measures_checked"], "measures match")"""))
+
+cells.append(md("""### Path 2: agents read the rendered tabs
+
+Catches what only exists in the rendering: a chart drawn from a stale extract, a tile labeled in thousands
+holding dollars. Roughly 25-35 model calls."""))
+cells.append(code("""if GEMINI_READY:
+    bi_buggy = await run_multi_agent(gemini, pack="buggy")
+    print("Saved to", save_run(bi_buggy, f"{gemini.model}_health_buggy"))
+    display(Markdown(render_markdown(bi_buggy)))
+else:
+    bi_buggy = None
+    print("skipped")"""))
+
+cells.append(code("""if GEMINI_READY:
+    bi_clean = await run_multi_agent(gemini, pack="clean")
+    save_run(bi_clean, f"{gemini.model}_health_clean")
+    display(Markdown(scorecard_markdown([score_run(bi_buggy), score_run(bi_clean)])))
+display(Markdown(compare_paths(model_buggy, bi_buggy)))"""))
+
+cells.append(md("Back to the retail dataset."))
+cells.append(code("""config.set_domain("retail")
+print(config.DOMAIN, config.DB_PATH)"""))
 
 cells.append(md("## Download"))
 cells.append(code("""import shutil

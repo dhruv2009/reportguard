@@ -85,3 +85,4 @@ def render_markdown(r) -> str:
         for agent, a in s["by_agent"].items():
             lines.append(f"| {agent} | {a['llm_calls']} | {a['tool_calls']} | {a['input_tokens']:,} | {a['output_tokens']:,} |")
     return _escape_dollars("\n".join(lines) + "\n")
+

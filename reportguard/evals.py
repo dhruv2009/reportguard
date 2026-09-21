@@ -27,8 +27,9 @@ def _as_dict(result) -> dict:
     return result if isinstance(result, dict) else result.to_json()
 
 
-def score_run(result, manifest_dir=config.MANIFEST_DIR) -> dict:
+def score_run(result, manifest_dir=None) -> dict:
     r = _as_dict(result)
+    manifest_dir = manifest_dir or config.MANIFEST_DIR      # resolved now: the active domain may have changed
     manifest = json.loads((manifest_dir / f"{r['pack']}.json").read_text(encoding="utf-8"))
     bugs = manifest["bugs"]
 
@@ -146,3 +147,4 @@ def scorecard_markdown(scores: list[dict]) -> str:
     if missed:
         lines += ["", "Missed: " + " | ".join(missed)]
     return "\n".join(lines)
+

@@ -195,7 +195,7 @@ def test_gemini_full_pipeline_record_then_replay(tmp_path, monkeypatch):
     assert sleeps and sleeps[0] >= 1.0
     first = fake.requests[1][1]
     assert any("inlineData" in p for p in first["contents"][0]["parts"])
-    assert {d["name"] for d in first["tools"][0]["functionDeclarations"]} == {"list_artifacts", "read_pdf_text"}
+    assert {d["name"] for d in first["tools"][0]["functionDeclarations"]} == {"list_artifacts", "read_pdf_text", "get_semantic_model"}
     assert recorded.stats["input_tokens"] > 0
     n_http = len(fake.requests)
 
@@ -367,3 +367,27 @@ def test_demo_page_builds_from_replayed_runs(tmp_path, monkeypatch):
     page = out.read_text(encoding="utf-8")
     assert len(fake.requests) == n_calls                      # built from cache only
     assert "data:image/png;base64," in page and "What it found" in page and "<table>" in page
+
+
+def test_health_domain_model_check_and_pipeline():
+    from reportguard.cli import setup as rg_setup
+    from reportguard.health.model_check import compare_paths, validate_semantic_model
+    try:
+        rg_setup("health")
+        buggy = validate_semantic_model("buggy")
+        clean = validate_semantic_model("clean")
+        assert buggy["measures_checked"] == 31 and buggy["llm_calls"] == 0
+        assert len(buggy["failed"]) == 7 and clean["failed"] == []          # 6 bugs, Midwest hits two measures
+        manifest = json.loads((config.MANIFEST_DIR / "buggy.json").read_text(encoding="utf-8"))
+        assert len(manifest["figures"]) == 45 and len(manifest["bugs"]) == 8
+
+        result = run(run_multi_agent(MockProvider(), "buggy", verbose=False))
+        assert result.error is None
+        s = score_run(result)
+        assert s["bugs_detected"] >= 5                                       # metadata-only reader misses the
+        assert set(s["missed_bugs"]) == {"H5:chart_table_mismatch", "H8:unit_mismatch"}   # rendering-only bugs
+        table = compare_paths(buggy, result)
+        assert "H5" in table and "caught" in table
+    finally:
+        config.set_domain("retail")
+        rg_setup()

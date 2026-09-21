@@ -92,6 +92,22 @@ doesn't buy accuracy here. What it buys is that the agent reading the documents 
 access and verdicts are computed in code, so a prompt injection can't change a result even if a
 model falls for it. This is one run on a small synthetic benchmark.
 
+## Second domain: a multi-tab BI dashboard
+
+`config.set_domain("health")` (or `--domain health`) points the same engine at a population health warehouse
+and a four-tab embedded BI report: 45 displayed numbers, 31 published measures, 8 planted bugs.
+
+A BI report can break in two ways, and they need different checks:
+
+| Path | What it does | Cost | Catches |
+|---|---|---|---|
+| `python -m reportguard.cli model-check` | recomputes every published measure from its governed definition | no model calls, ~0.1s | wrong values: bad denominator, missing filter, drifted definition, stale slice |
+| `python -m reportguard.cli run --domain health` | agents read the rendered tabs | ~25-35 model calls | anything that only exists in the rendering: a chart built from a stale extract, a tile labeled in thousands holding dollars |
+
+The measure check is what scales to hundreds of metrics, since it is plain code. The agent pass is what
+notices that the report a person actually sees disagrees with the model behind it.
+`compare_paths()` prints which planted bug each path caught.
+
 ## Setup
 
 ```bash
@@ -198,6 +214,7 @@ reportguard/
   evals.py                scoring
   qa_report.py            markdown report
   site.py                 demo page (docs/index.html)
+  health/                 population health domain: warehouse, metrics, BI dashboard, model check
   cli.py
   llm/                    gemini, anthropic, openai_compat (ollama), mock
 skills/report-qa/         skill file

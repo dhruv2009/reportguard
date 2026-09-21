@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict, dataclass
 
+from . import config
+
 _COMPLETED_IN_PERIOD = "o.status = 'completed' AND o.order_ts_utc >= :start AND o.order_ts_utc < :end"
 
 
@@ -24,7 +26,7 @@ class MetricDef:
     version: str = "2026.1"
 
 
-METRICS: dict[str, MetricDef] = {m.id: m for m in [
+RETAIL_METRICS: dict[str, MetricDef] = {m.id: m for m in [
     MetricDef(
         "GROSS_REVENUE", "Gross revenue", "usd",
         "Sum of quantity x unit_price for COMPLETED orders placed in the period. Period boundaries are UTC.",
@@ -83,11 +85,16 @@ METRICS: dict[str, MetricDef] = {m.id: m for m in [
         abs_tolerance=1.0, dimension="category"),
 ]}
 
+METRICS: dict[str, MetricDef] = RETAIL_METRICS
+if config.DOMAIN == "health":
+    from .health.metrics import METRICS as METRICS  # noqa: F811  (domain switch, RG_DOMAIN=health)
+
 UNIT_SCALES = {
     "usd": {"": 1, "$": 1, "usd": 1, "$k": 1e3, "k": 1e3, "usd k": 1e3, "thousands": 1e3,
             "$m": 1e6, "m": 1e6, "millions": 1e6},
     "count": {"": 1, "#": 1, "count": 1, "k": 1e3, "thousands": 1e3, "m": 1e6},
     "percent": {"%": 1, "percent": 1, "pct": 1, "": 1, "ratio": 100},
+    "rate": {"": 1, "per 1000": 1, "per 1,000": 1, "/1000": 1, "days": 1, "pmpm": 1},
 }
 
 
@@ -110,7 +117,7 @@ def compute_metric(conn: sqlite3.Connection, metric_id: str, period: str, dimens
     if m.dimension and not dimension_value:
         raise ValueError(f"{metric_id} needs dimension_value (a {m.dimension})")
     start, end = period_bounds(period)
-    params = {"start": start, "end": end, "dimension": dimension_value}
+    params = {"start": start, "end": end, "dimension": dimension_value, "month": period}
     value = conn.execute(m.sql, params).fetchone()[0]
     return float(value or 0)
 
