@@ -199,17 +199,6 @@ if RUN_OLLAMA:
 else:
     pass"""))
 
-cells.append(md("## Demo page"))
-cells.append(code("""from reportguard.site import build_demo_page
-try:
-    page = await build_demo_page()
-    print(page)
-    if IN_COLAB:
-        from google.colab import files
-        files.download(str(page))
-except Exception as exc:
-    print("demo page not built:", exc)"""))
-
 cells.append(md("""## BI dashboard: population health
 
 Same engine pointed at a different domain: a four-tab embedded BI report (population overview, utilization,
@@ -233,7 +222,7 @@ print("clean pack:", model_clean["passed"], "of", model_clean["measures_checked"
 cells.append(md("""### Path 2: agents read the rendered tabs
 
 Catches what only exists in the rendering: a chart drawn from a stale extract, a tile labeled in thousands
-holding dollars. Roughly 25-35 model calls."""))
+holding dollars. Roughly 30-45 model calls."""))
 cells.append(code("""if GEMINI_READY:
     bi_buggy = await run_multi_agent(gemini, pack="buggy")
     print("Saved to", save_run(bi_buggy, f"{gemini.model}_health_buggy"))
@@ -251,6 +240,25 @@ display(Markdown(compare_paths(model_buggy, bi_buggy)))"""))
 cells.append(md("Back to the retail dataset."))
 cells.append(code("""config.set_domain("retail")
 print(config.DOMAIN, config.DB_PATH)"""))
+
+cells.append(md("""## Demo page and README results
+Replays the recorded runs from the cache (no API calls, no cost) for both the retail report and the BI dashboard,
+builds `docs/index.html`, and rewrites the results block in `README.md` from the same runs, so the page and the
+README always show the same numbers. Both files download; if Chrome asks about multiple downloads, click Allow."""))
+cells.append(code("""from reportguard.site import build_demo_page
+try:
+    built = await build_demo_page()
+    for w in built["warnings"]:
+        print("note:", w)
+    print("sections on the page:", ", ".join(built["sections"]))
+    print(built["page"])
+    print(built["readme"])
+    if IN_COLAB:
+        from google.colab import files
+        files.download(str(built["page"]))
+        files.download(str(built["readme"]))
+except Exception as exc:
+    print("demo page not built:", exc)"""))
 
 cells.append(md("## Download"))
 cells.append(code("""import shutil

@@ -363,10 +363,18 @@ def test_demo_page_builds_from_replayed_runs(tmp_path, monkeypatch):
             assert result.error is None, result.error
     run(record_all())
     n_calls = len(fake.requests)
-    out = run(site.build_demo_page(tmp_path / "docs" / "index.html"))
-    page = out.read_text(encoding="utf-8")
+    readme = tmp_path / "README.md"
+    readme.write_text("intro\n<!-- results:start -->\nold numbers\n<!-- results:end -->\nrest\n", encoding="utf-8")
+    built = run(site.build_demo_page(tmp_path / "docs" / "index.html", readme_path=readme))
+    page = built["page"].read_text(encoding="utf-8")
     assert len(fake.requests) == n_calls                      # built from cache only
     assert "data:image/png;base64," in page and "What it found" in page and "<table>" in page
+    assert 'class="verdict' in page                           # critic verdict shown on each finding
+    assert built["sections"] == ["retail"]                    # no health runs recorded here
+    assert any("health dashboard" in w for w in built["warnings"])
+    text = readme.read_text(encoding="utf-8")
+    assert "old numbers" not in text and "Retail report" in text and text.startswith("intro") and "rest" in text
+    assert config.DOMAIN == "retail"                          # domain restored afterwards
 
 
 def test_health_domain_model_check_and_pipeline():
@@ -415,3 +423,97 @@ def test_dimension_labels_resolve_case_insensitively():
         compute_metric(conn, "CATEGORY_REVENUE", "2026-08", "Electronics") > 0
     with pytest.raises(ValueError, match="Valid values"):
         compute_metric(conn, "CATEGORY_REVENUE", "2026-08", "Garden")
+
+
+def test_demo_page_health_section_renders():
+    from reportguard import site
+    from reportguard.cli import setup as rg_setup
+    try:
+        rg_setup("health")
+        manifest = json.loads((config.MANIFEST_DIR / "buggy.json").read_text(encoding="utf-8"))
+        causes = {b["bug_id"]: b["root_cause"] for b in manifest["bugs"]}
+        conn = sqlite3.connect(config.DB_PATH)
+        issues = []
+        for n, f in enumerate(f for f in manifest["figures"] if f.get("bug_id")):
+            r = check_metric(conn, f["metric_id"], f["value"], f["unit_label"], f["period"], f["dimension_value"],
+                             f["decimals"])
+            issues.append({"artifact_id": f["artifact_id"], "label": f["label"], "displayed_text": f["displayed_text"],
+                           "metric_id": f["metric_id"], "dimension_value": f["dimension_value"], "result": r,
+                           "root_cause": causes[f["bug_id"]], "verdict": "confirmed" if n % 2 else "uncertain",
+                           "explanation": "x", "critic_reason": "y", "evidence_sql": []})
+        buggy = {"pack": "buggy", "mode": "multi_agent", "provider": "gemini", "model": "m", "issues": issues,
+                 "checks": [{"result": {"status": "FAIL"}}] * len(issues), "stats": {"llm_calls": 29},
+                 "security_notes": [{"artifact_id": "tab1", "description": "hidden instruction in a measure"}]}
+        clean = {"pack": "clean", "mode": "multi_agent", "provider": "gemini", "model": "m", "issues": [],
+                 "checks": [], "stats": {"llm_calls": 12}, "security_notes": []}
+        h = site.health_data(buggy, clean)
+        html_out = site._health_section(h)
+        assert html_out.count("data:image/png;base64,") == 4
+        assert "DIVIDE(" in html_out                                   # DAX expressions from the model check
+        assert "× too large" in html_out                               # the thousands/dollars tile
+        assert 'class="verdict uncertain"' in html_out and 'class="verdict confirmed"' in html_out
+        assert h["agent_hits"] == h["bugs"] and h["model_hits"] < h["bugs"] and h["render_only"]
+        rows = dict((a, (b, c)) for a, b, c in site.health_rows(h))
+        assert rows["Model calls"] == ("0", "29")
+    finally:
+        config.set_domain("retail")
+
+
+def test_demo_page_formatting_helpers():
+    from PIL import ImageFont
+    from reportguard import site
+    assert site._delta({"ratio_reported_to_expected": 1000.0, "delta_pct": 99900.0}) == "1,000× too large"
+    assert site._delta({"ratio_reported_to_expected": 0.001, "delta_pct": -99.9}) == "1,000× too small"
+    assert site._delta({"ratio_reported_to_expected": 1.047, "delta_pct": 4.7}) == "+4.7%"
+    assert isinstance(site._font(20), ImageFont.FreeTypeFont)          # real font, not the tiny bitmap default
+    assert site._num(482.6, "rate") == "482.6" and site._num(1882.0, "count") == "1,882"
+
+
+def test_http_server_requires_bearer_token():
+    import os
+    import socket
+    import subprocess
+    import sys
+    import time
+
+    from mcp import Client
+    from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+
+    def free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    port = free_port()
+    env = {**os.environ, "HOST": "127.0.0.1", "PORT": str(port), "RG_API_TOKEN": "s3cret", "RG_DOMAIN": "retail"}
+    proc = subprocess.Popen([sys.executable, str(config.PROJECT_ROOT / "run_server.py"), "--http"], env=env,
+                            stderr=subprocess.DEVNULL)
+    url = f"http://127.0.0.1:{port}/mcp"
+    try:
+        for _ in range(100):
+            try:
+                httpx.get(url, timeout=0.5)
+                break
+            except httpx.HTTPError:
+                time.sleep(0.1)
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}
+        accept = {"Accept": "application/json, text/event-stream"}
+        assert httpx.post(url, json=init, headers=accept).status_code == 401
+        assert httpx.post(url, json=init, headers={**accept, "Authorization": "Bearer wrong"}).status_code == 401
+
+        async def authed():
+            http = create_mcp_http_client(headers={"Authorization": "Bearer s3cret"})
+            async with Client(streamable_http_client(url, http_client=http)) as c:
+                return [t.name for t in (await c.list_tools()).tools]
+        assert "check_metric" in run(authed())
+    finally:
+        proc.terminate()
+        proc.wait()
+
+    env_public = {k: v for k, v in env.items() if k != "RG_API_TOKEN"} | {"HOST": "0.0.0.0", "PORT": str(free_port())}
+    refused = subprocess.run([sys.executable, str(config.PROJECT_ROOT / "run_server.py"), "--http"], env=env_public,
+                             capture_output=True, text=True, timeout=60)
+    assert refused.returncode == 1 and "RG_API_TOKEN" in refused.stderr

@@ -61,9 +61,20 @@ def render_markdown(r) -> str:
             lines += [f"### {n}. {i['label']} ({i['artifact_id']})", "", i.get("explanation", "")]
             if i.get("critic_reason"):
                 lines += ["", f"_Critic ({i['verdict']}):_ {i['critic_reason']}"]
+            if i.get("second_look"):
+                lines += ["", "_Re-investigated after the critic's first review._"]
             for q in i.get("evidence_sql") or []:
                 lines += ["", "```sql", q, "```"]
             lines.append("")
+
+    second = getattr(r, "second_look", None) or []
+    if second:
+        ok = sum(1 for x in second if x["verdict"] == "confirmed")
+        lines += ["## Second look", "",
+                  f"{len(second)} {'explanation' if len(second) == 1 else 'explanations'} the critic could not "
+                  f"verify {'was' if len(second) == 1 else 'were'} re-investigated; {ok} confirmed afterwards.", ""]
+        lines += [f"- {x['check_id']}: {x['first_root_cause']} -> {x['root_cause']} ({x['verdict']})" for x in second]
+        lines.append("")
 
     if r.consistency:
         lines += ["## Cross-figure inconsistencies", ""]

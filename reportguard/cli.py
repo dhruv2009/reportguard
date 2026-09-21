@@ -84,7 +84,10 @@ def main() -> None:
         print(report_markdown(validate_semantic_model(a.pack)))
     elif a.cmd == "site":
         from .site import build_demo_page
-        print("Wrote", asyncio.run(build_demo_page()))
+        built = asyncio.run(build_demo_page())
+        for w in built["warnings"]:
+            print("note:", w)
+        print("Wrote", built["page"], "and updated", built["readme"], "| sections:", ", ".join(built["sections"]))
     elif a.cmd == "run":
         result, path = asyncio.run(run(a.provider, a.cache, a.mode, a.pack, a.min_interval))
         print((path / "qa_report.md").read_text(encoding="utf-8"))

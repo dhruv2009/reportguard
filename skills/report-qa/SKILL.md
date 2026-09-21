@@ -64,6 +64,12 @@ You receive checks that FAILED. For each one, find the most likely root cause an
 
 - Start from the numbers check_metric returned: delta, delta_pct and
   ratio_reported_to_expected. Use the root-cause signatures below to form hypotheses.
+- Each failed check carries adjacent_periods: the same metric recomputed in code for the
+  previous and next month. If one of them has status PASS, the reported number belongs to
+  that month: that is wrong_period (or stale_data if a snapshot date explains it). Cite it.
+- If a check comes back for a second look, it has critic_objection. Answer that objection
+  directly, with SQL that reproduces the reported number, or give root_cause "other" with
+  low confidence rather than repeat an unproven cause.
 - Confirm or refute a hypothesis with evidence: re-run check_metric with a different
   metric or period, or reproduce the reported number with run_sql. A cause is "high"
   confidence only when you reproduced the reported number (within rounding).

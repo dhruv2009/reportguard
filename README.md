@@ -30,8 +30,11 @@ flowchart LR
    validated in code and sent back if something is missing or wrong.
 3. Each planned check runs through `check_metric` (no LLM). It recomputes the metric, applies the unit
    and a rounding tolerance, and returns PASS/FAIL with the delta.
-4. **Investigator** looks at the failures and uses SQL to find the cause.
-5. **Critic** reviews the findings and can reject or downgrade them.
+4. Before any agent looks at a failure, code recomputes the same metric for the previous and next
+   month. A number that matches an adjacent month exactly comes with that evidence attached.
+5. **Investigator** looks at the failures and uses SQL to find the cause.
+6. **Critic** reviews each explanation and marks it confirmed, uncertain or rejected. Anything it marks
+   uncertain goes back to the investigator once, with the critic's objection, and is reviewed again.
 
 All tools come from the MCP server in `reportguard/server.py`. Each agent only gets the tools it needs:
 
@@ -72,25 +75,40 @@ with all tools on the buggy pack for comparison, and scores recall, precision, r
 false positives on the clean pack, extraction accuracy, whether the hidden text was flagged, and
 LLM calls/tokens.
 
-Results with `gemini-3.8-flash`:
+<!-- results:start -->
+Results with `gemini:gemini-3.8-flash`. Regenerate this block from the recorded runs with
+`python -m reportguard.cli site` (it also rebuilds the demo page, so the two always agree).
 
-| Metric | Multi-agent (buggy) | Multi-agent (clean) | Single agent (buggy) |
+**Retail report**
+
+| Metric | Multi-agent, buggy report | Multi-agent, clean report | Single agent, buggy report |
 |---|---|---|---|
 | Bugs detected | 7/7 | n/a (no bugs) | 7/7 |
 | Precision | 1.0 | n/a | 1.0 |
 | Root-cause accuracy | 1.0 | n/a | 1.0 |
 | False positives | 0 | 0 | 0 |
 | Extraction recall | 1.0 | 1.0 | n/a |
-| Metric mapping accuracy | 1.0 | 1.0 | n/a |
-| Hidden injection flagged | yes | n/a | yes |
-| LLM calls | 23 | 4 | 11 |
-| Tokens in / out | 156K / 12K | 19K / 12K | 132K / 9K |
-| Wall time | 78s | 70s | 66s |
+| Hidden instruction flagged | yes | n/a | yes |
+| LLM calls | 25 | 5 | 16 |
+| Tokens in / out | 191K / 10K | 23K / 4.7K | 152K / 2.9K |
 
-On this test set the single agent was just as accurate and used fewer calls. The multi-agent setup
-doesn't buy accuracy here. What it buys is that the agent reading the documents has no database
-access and verdicts are computed in code, so a prompt injection can't change a result even if a
-model falls for it. This is one run on a small synthetic benchmark.
+The single agent, given every tool at once, caught 7 of 7 with 16 model calls against 25 for the multi-agent
+pipeline. On this test the split doesn't buy accuracy. It buys containment: the only agent that reads the
+documents can't query the database, and pass or fail is computed in code, so an instruction hidden in a report
+can't change a result even if a model follows it.
+
+**Population health BI dashboard**
+
+| | Model check (code) | Agents on the rendered tabs |
+|---|---|---|
+| Planted bugs caught | 6/8 | 8/8 |
+| Model calls | 0 | 29 |
+
+The model check needs no model calls, which is what makes it scale, but it can't see a bug that only exists in
+the rendering (H5, H8).
+
+This is one recorded run on a small synthetic benchmark.
+<!-- results:end -->
 
 ## Second domain: a multi-tab BI dashboard
 
@@ -180,16 +198,18 @@ Claude directly.
 from the environment (defaults `127.0.0.1` and `8000`) and generates the data on first start if it's
 missing.
 
+Every HTTP request needs `Authorization: Bearer <RG_API_TOKEN>` when `RG_API_TOKEN` is set, and the
+server refuses to start on a public address without one. Local use over stdio needs no token.
+
 With Docker:
 
 ```bash
 docker build -t reportguard .
-docker run -p 8000:8000 reportguard
+docker run -p 8000:8000 -e RG_API_TOKEN=choose-a-long-random-string reportguard
 ```
 
-The Dockerfile also works on Render as a free web service. Free instances sleep after 15 minutes
-without traffic, so the first request after that is slow. The server has no auth, so only host it
-with the synthetic data.
+The Dockerfile also works on Render as a web service: set `RG_API_TOKEN` in the service's environment.
+In MCP Inspector, choose Streamable HTTP, enter the URL, and add the `Authorization` header.
 
 ## SQL tool
 
@@ -221,10 +241,19 @@ skills/report-qa/         skill file
 tests/
 ```
 
-## Limitations / TODO
+## Scope
 
-- Data is synthetic
-- 9 metrics, defined in Python (could come from dbt/LookML instead)
-- Charts need data labels to be read
-- No auth on the MCP server
-- Excel and slide decks aren't supported yet
+What the project covers, and where it deliberately stops:
+
+- **Data.** The warehouses and reports are synthetic, generated from a fixed seed. That is what makes the
+  evaluation possible: every planted bug has a known answer, and the answer keys stay out of the agents' reach.
+- **Metric definitions.** Each metric is an ID, one reviewed SQL statement, a unit and a tolerance, kept in
+  `reportguard/metrics.py` and `reportguard/health/metrics.py`. The engine needs nothing else from a metric
+  layer, so definitions from any semantic layer fit the same shape.
+- **Inputs.** PDF reports, dashboard screenshots, and a BI semantic-model export shaped like Power BI's
+  execute-queries output.
+- **Charts** are read from their data labels. A chart without labels is reported as unreadable instead of
+  estimated from bar heights.
+- **Explanations** come from a model and can differ between runs. Detection does not depend on them: pass or
+  fail is always computed in code, and every explanation carries the critic's verdict.
+- **Access.** Local MCP over stdio needs no auth; the HTTP server requires a bearer token.

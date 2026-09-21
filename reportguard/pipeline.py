@@ -62,6 +62,7 @@ class RunResult:
     security_notes: list[dict] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     trace: list[dict] = field(default_factory=list)
+    second_look: list[dict] = field(default_factory=list)   # uncertain findings that were re-investigated
     error: str | None = None
     error_traceback: str | None = None
 
@@ -96,6 +97,13 @@ async def connect_mcp():
     with open(config.RUNS_DIR / "mcp_server.log", "a") as log:
         async with Client(stdio_client(server_params(), errlog=log)) as client:
             yield client
+
+
+def shift_period(period: str, months: int) -> str:
+    """'2026-08', -1 -> '2026-07'."""
+    year, month = (int(x) for x in period.split("-"))
+    index = year * 12 + (month - 1) + months
+    return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
 
 def pack_artifacts(pack: str, period: str) -> list[str]:
@@ -354,6 +362,29 @@ async def run_multi_agent(provider: Provider, pack: str = "buggy", period: str =
             result.consistency = _consistency(figures, result.checks)
             say(f"    {len(result.checks) - len(failed)} passed, {len(failed)} failed or errored")
 
+            # evidence for the investigator, gathered in code: does a failing number match an adjacent month?
+            adjacent_matches = 0
+            for c in failed:
+                if c["result"]["status"] != "FAIL":
+                    continue
+                f = c["figure"]
+                evidence = []
+                for p in (shift_period(c["period"], -1), shift_period(c["period"], 1)):
+                    args = {"metric_id": c["metric_id"], "reported_value": f["value"], "unit_label": f["unit_label"],
+                            "period": p, "dimension_value": c["dimension_value"],
+                            "display_decimals": f["display_decimals"]}
+                    res = await mcp.call_tool("check_metric", args)
+                    tracer.add("host", "tool_call", tool="check_metric", args=args, is_error=bool(res.is_error),
+                               latency_s=0)
+                    if not res.is_error:
+                        r = json.loads(mcp_result_text(res))
+                        evidence.append({"period": p, "status": r["status"], "expected": r["expected"]})
+                c["adjacent_periods"] = evidence
+                adjacent_matches += any(e["status"] == "PASS" for e in evidence)
+            if failed:
+                say(f"    month evidence: {adjacent_matches} of {len(failed)} failing numbers match the previous or next "
+                    f"month exactly")
+
             # 4. investigator
             findings: InvestigationOutput = InvestigationOutput(findings=[])
             if failed:
@@ -384,6 +415,51 @@ async def run_multi_agent(provider: Provider, pack: str = "buggy", period: str =
                     [{"type": "text", "text": f"Findings to review:\n{_j(review)}\n\nReturn one verdict per finding."}],
                     tracer)
                 verdicts = {v.finding_id: v.model_dump() for v in critic.verdicts}
+
+                # second look: re-investigate what the critic could not verify, then review it again
+                uncertain = [f for f in findings.findings if verdicts[f.finding_id]["verdict"] == "uncertain"]
+                if uncertain:
+                    say(f"Second look: re-investigating {len(uncertain)} of {len(findings.findings)} findings the critic "
+                        f"marked uncertain ...")
+                    retry_ids = {f.check_id for f in uncertain}
+                    brief = [{**by_check[f.check_id], "first_root_cause": f.root_cause,
+                              "first_explanation": f.explanation,
+                              "critic_objection": verdicts[f.finding_id]["reason"]} for f in uncertain]
+                    retry: InvestigationOutput = await run_agent(
+                        AgentConfig("second_look", build_system_prompt("investigator", InvestigationOutput, True),
+                                    ALLOWLISTS["investigator"], InvestigationOutput,
+                                    lambda o: validate_findings(o, retry_ids),
+                                    lambda o: salvage_findings(o, retry_ids), max_turns=16),
+                        provider, mcp, specs,
+                        [{"type": "text", "text": f"Report period: {period}. Failed checks:\n{_j(brief)}\n\n"
+                                                  f"The critic could not verify your first explanation for these "
+                                                  f"checks; its objection is in critic_objection. Re-investigate "
+                                                  f"each one: reproduce the reported number exactly with SQL, or "
+                                                  f"return root_cause 'other' with low confidence. Return one "
+                                                  f"finding per check_id."}], tracer)
+                    fresh = [f.model_copy(update={"finding_id": f"S{n}"}) for n, f in enumerate(retry.findings, 1)]
+                    fresh_ids = {f.finding_id for f in fresh}
+                    review2 = [{**f.model_dump(), "check": by_check[f.check_id]} for f in fresh]
+                    critic2: CriticOutput = await run_agent(
+                        AgentConfig("second_critic", build_system_prompt("critic", CriticOutput, True),
+                                    ALLOWLISTS["critic"], CriticOutput, lambda o: validate_verdicts(o, fresh_ids),
+                                    lambda o: salvage_verdicts(o, fresh_ids), max_turns=10),
+                        provider, mcp, specs,
+                        [{"type": "text", "text": f"Findings to review:\n{_j(review2)}\n\nReturn one verdict per "
+                                                  f"finding."}], tracer)
+                    second = {v.finding_id: v.model_dump() for v in critic2.verdicts}
+                    for f in fresh:
+                        first = next(u for u in uncertain if u.check_id == f.check_id)
+                        result.second_look.append({"check_id": f.check_id, "first_root_cause": first.root_cause,
+                                                   "root_cause": f.root_cause,
+                                                   "verdict": second[f.finding_id]["verdict"]})
+                    verdicts.update(second)
+                    order = {c["check_id"]: n for n, c in enumerate(failed)}
+                    merged = [f for f in findings.findings if f.check_id not in retry_ids] + fresh
+                    findings = InvestigationOutput(findings=sorted(merged, key=lambda f: order[f.check_id]))
+                    result.findings = [f.model_dump() for f in findings.findings]
+                    confirmed_now = sum(1 for x in result.second_look if x["verdict"] == "confirmed")
+                    say(f"    {confirmed_now} of {len(fresh)} confirmed on the second look")
                 result.verdicts = list(verdicts.values())
 
             by_check = {c["check_id"]: c for c in result.checks}
@@ -397,7 +473,8 @@ async def run_multi_agent(provider: Provider, pack: str = "buggy", period: str =
                     "displayed_text": c["figure"]["displayed_text"], "metric_id": c["metric_id"],
                     "dimension_value": c["dimension_value"], "period": c["period"], "result": c["result"],
                     "root_cause": f["root_cause"], "confidence": f["confidence"], "explanation": f["explanation"],
-                    "evidence_sql": f["evidence_sql"], "verdict": v["verdict"], "critic_reason": v["reason"]})
+                    "evidence_sql": f["evidence_sql"], "verdict": v["verdict"], "critic_reason": v["reason"],
+                    "second_look": f["finding_id"].startswith("S")})
             say("Done.")
     except Exception as exc:  # keep partial results
         _record_error(result, exc, say)
