@@ -108,12 +108,15 @@ METRICS: dict[str, MetricDef] = {m.id: m for m in [
         "Total cost of care restricted to one claim category (claims.category = :dimension).",
         "SELECT ROUND(COALESCE(SUM(c.amount), 0), 2) FROM claims c WHERE c.category = :dimension "
         "AND c.service_ts_utc >= :start AND c.service_ts_utc < :end",
-        abs_tolerance=1.0, dimension="category"),
+        abs_tolerance=1.0, dimension="category",
+        dimension_values_sql="SELECT DISTINCT category FROM claims",
+        dimension_aliases=(("emergency", "ed"), ("emergency department", "ed"))),
     MetricDef(
         "REGION_MEMBERS", "Attributed members by region", "count",
         "Attributed members in the month, restricted to one region (patients.region = :dimension).",
         "SELECT COUNT(*) FROM member_months mm JOIN patients p ON p.patient_id = mm.patient_id "
-        "WHERE mm.month = :month AND p.region = :dimension", abs_tolerance=0, dimension="region"),
+        "WHERE mm.month = :month AND p.region = :dimension", abs_tolerance=0, dimension="region",
+        dimension_values_sql="SELECT DISTINCT region FROM patients"),
     MetricDef(
         "REGION_COST_PMPM", "Cost per member per month by region", "usd",
         "Regional cost of care divided by regional attributed members for the same month.",
@@ -122,7 +125,8 @@ METRICS: dict[str, MetricDef] = {m.id: m for m in [
         "AND c.service_ts_utc >= :start AND c.service_ts_utc < :end) / "
         "(SELECT COUNT(*) FROM member_months mm JOIN patients p2 ON p2.patient_id = mm.patient_id "
         "WHERE mm.month = :month AND p2.region = :dimension), 2)",
-        abs_tolerance=0.01, dimension="region"),
+        abs_tolerance=0.01, dimension="region",
+        dimension_values_sql="SELECT DISTINCT region FROM patients"),
     MetricDef(
         "REGION_ED_PER_1000", "ED visits per 1,000 members by region", "rate",
         "Regional ED visits divided by regional attributed members, annualized per 1,000 members.",
@@ -131,5 +135,6 @@ METRICS: dict[str, MetricDef] = {m.id: m for m in [
         "AND e.admit_ts_utc >= :start AND e.admit_ts_utc < :end) / "
         "(SELECT COUNT(*) FROM member_months mm JOIN patients p2 ON p2.patient_id = mm.patient_id "
         "WHERE mm.month = :month AND p2.region = :dimension), 1)",
-        abs_tolerance=0.05, dimension="region"),
+        abs_tolerance=0.05, dimension="region",
+        dimension_values_sql="SELECT DISTINCT region FROM patients"),
 ]}

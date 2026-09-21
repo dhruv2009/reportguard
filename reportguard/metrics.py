@@ -24,6 +24,8 @@ class MetricDef:
     abs_tolerance: float
     dimension: str | None = None
     version: str = "2026.1"
+    dimension_values_sql: str | None = None       # where valid dimension values come from
+    dimension_aliases: tuple = ()                  # (("emergency", "ed"),): display label -> stored value
 
 
 RETAIL_METRICS: dict[str, MetricDef] = {m.id: m for m in [
@@ -82,7 +84,8 @@ RETAIL_METRICS: dict[str, MetricDef] = {m.id: m for m in [
         f"SELECT ROUND(COALESCE(SUM(oi.quantity * oi.unit_price), 0), 2) FROM orders o "
         f"JOIN order_items oi ON oi.order_id = o.order_id JOIN products p ON p.product_id = oi.product_id "
         f"WHERE {_COMPLETED_IN_PERIOD} AND p.category = :dimension",
-        abs_tolerance=1.0, dimension="category"),
+        abs_tolerance=1.0, dimension="category",
+        dimension_values_sql="SELECT DISTINCT category FROM products"),
 ]}
 
 METRICS: dict[str, MetricDef] = RETAIL_METRICS
@@ -110,12 +113,28 @@ def period_bounds(period: str) -> tuple[str, str]:
     return f"{year:04d}-{month:02d}-01 00:00:00", f"{nxt[0]:04d}-{nxt[1]:02d}-01 00:00:00"
 
 
+def resolve_dimension(conn: sqlite3.Connection, m: MetricDef, value: str) -> str:
+    """Match a displayed dimension label to a stored value, ignoring case. An unknown value is an
+    error, not a silent zero."""
+    if not m.dimension_values_sql:
+        return value
+    stored = [r[0] for r in conn.execute(m.dimension_values_sql).fetchall()]
+    wanted = value.strip().lower()
+    wanted = dict(m.dimension_aliases).get(wanted, wanted)
+    for v in stored:
+        if str(v).lower() == wanted:
+            return v
+    raise ValueError(f"Unknown {m.dimension} {value!r} for {m.id}. Valid values: {sorted(stored)}")
+
+
 def compute_metric(conn: sqlite3.Connection, metric_id: str, period: str, dimension_value: str | None = None) -> float:
     m = METRICS.get(metric_id)
     if m is None:
         raise ValueError(f"Unknown metric_id {metric_id!r}. Known: {sorted(METRICS)}")
     if m.dimension and not dimension_value:
         raise ValueError(f"{metric_id} needs dimension_value (a {m.dimension})")
+    if m.dimension:
+        dimension_value = resolve_dimension(conn, m, dimension_value)
     start, end = period_bounds(period)
     params = {"start": start, "end": end, "dimension": dimension_value, "month": period}
     value = conn.execute(m.sql, params).fetchone()[0]

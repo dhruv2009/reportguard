@@ -33,25 +33,44 @@ def score_run(result, manifest_dir=None) -> dict:
     manifest = json.loads((manifest_dir / f"{r['pack']}.json").read_text(encoding="utf-8"))
     bugs = manifest["bugs"]
 
-    issues = [i for i in r["issues"] if i.get("verdict") != "rejected"]
-    used, detected = set(), []
+    # every displayed number the answer key marks wrong, keyed like an issue; one bug can break several
+    wrong: dict[tuple, str] = {}
+    for f in manifest["figures"]:
+        if f.get("bug_id"):
+            wrong[_key(f["artifact_id"], f["metric_id"], f.get("dimension_value"))] = f["bug_id"]
     for b in bugs:
-        match = next((n for n, i in enumerate(issues) if n not in used and
-                      _key(i["artifact_id"], i["metric_id"], i.get("dimension_value")) ==
-                      _key(b["artifact_id"], b["metric_id"], b["dimension_value"])), None)
-        if match is not None:
-            used.add(match)
-            detected.append({"bug_id": b["bug_id"], "expected_cause": b["root_cause"],
-                             "found_cause": issues[match]["root_cause"],
-                             "cause_correct": issues[match]["root_cause"] == b["root_cause"]})
-    false_positives = [{"artifact_id": i["artifact_id"], "label": i["label"], "metric_id": i["metric_id"],
-                        "root_cause": i["root_cause"]} for n, i in enumerate(issues) if n not in used]
+        wrong.setdefault(_key(b["artifact_id"], b["metric_id"], b["dimension_value"]), b["bug_id"])
+
+    issues = [i for i in r["issues"] if i.get("verdict") != "rejected"]
+    hits: dict[str, list[dict]] = {}
+    flagged: set[tuple] = set()
+    false_positives = []
+    for i in issues:
+        k = _key(i["artifact_id"], i["metric_id"], i.get("dimension_value"))
+        if k in wrong:
+            if k not in flagged:                      # the same number flagged twice counts once
+                flagged.add(k)
+                hits.setdefault(wrong[k], []).append(i)
+        else:
+            false_positives.append({"artifact_id": i["artifact_id"], "label": i["label"],
+                                    "metric_id": i["metric_id"], "root_cause": i["root_cause"]})
+    detected = []
+    for b in bugs:
+        found = hits.get(b["bug_id"])
+        if found:
+            causes = [x["root_cause"] for x in found]
+            top = max(dict.fromkeys(causes), key=causes.count)
+            detected.append({"bug_id": b["bug_id"], "expected_cause": b["root_cause"], "found_cause": top,
+                             "cause_correct": top == b["root_cause"], "numbers_flagged": len(found)})
     tp = len(detected)
+    true_flags = len(flagged)
     score = {
         "pack": r["pack"], "mode": r["mode"], "model": f"{r['provider']}:{r['model']}", "error": r.get("error"),
         "bugs_planted": len(bugs), "bugs_detected": tp,
         "recall": round(tp / len(bugs), 3) if bugs else None,
-        "precision": round(tp / (tp + len(false_positives)), 3) if (tp + len(false_positives)) else None,
+        "precision": round(true_flags / (true_flags + len(false_positives)), 3)
+        if (true_flags + len(false_positives)) else None,
+        "wrong_numbers_flagged": true_flags, "wrong_numbers_total": len(wrong),
         "false_positives": len(false_positives),
         "root_cause_accuracy": round(sum(d["cause_correct"] for d in detected) / tp, 3) if tp else None,
         "missed_bugs": [b["bug_id"] + ":" + b["root_cause"] for b in bugs
@@ -117,6 +136,7 @@ def score_run(result, manifest_dir=None) -> dict:
 
 SCORECARD_ROWS = [
     ("bugs_detected", "Planted bugs detected"), ("recall", "Recall"), ("precision", "Precision"),
+    ("wrong_numbers_flagged", "Wrong numbers flagged"),
     ("false_positives", "False positives"), ("root_cause_accuracy", "Root-cause accuracy"),
     ("extraction_recall", "Extraction recall"), ("mapping_accuracy", "Metric mapping accuracy"),
     ("critic_false_alarms_removed", "Critic: false alarms removed"),
@@ -141,6 +161,8 @@ def scorecard_markdown(scores: list[dict]) -> str:
             v = s.get(key, "")
             if key == "bugs_detected" and key in s:
                 v = f"{s['bugs_detected']}/{s['bugs_planted']}"
+            elif key == "wrong_numbers_flagged" and key in s:
+                v = f"{s['wrong_numbers_flagged']}/{s['wrong_numbers_total']}"
             cells.append("" if v is None else str(v))
         lines.append(f"| {label} | " + " | ".join(cells) + " |")
     missed = [f"{s['mode']}/{s['pack']}: {', '.join(s['missed_bugs'])}" for s in scores if s.get("missed_bugs")]

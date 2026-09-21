@@ -391,3 +391,27 @@ def test_health_domain_model_check_and_pipeline():
     finally:
         config.set_domain("retail")
         rg_setup()
+
+
+def test_scorer_counts_every_wrong_number_not_one_per_bug():
+    manifest = json.loads((config.MANIFEST_DIR / "buggy.json").read_text())
+    wrong = [f for f in manifest["figures"] if f.get("bug_id")]
+    causes = {b["bug_id"]: b["root_cause"] for b in manifest["bugs"]}
+    issues = [{"artifact_id": f["artifact_id"], "label": f["label"], "metric_id": f["metric_id"],
+               "dimension_value": f["dimension_value"], "root_cause": causes[f["bug_id"]], "verdict": "confirmed"}
+              for f in wrong]
+    issues.append(dict(issues[0]))                       # the same number flagged twice is not a false positive
+    run_ = {"pack": "buggy", "mode": "multi_agent", "provider": "p", "model": "m", "issues": issues,
+            "security_notes": [], "stats": {}}
+    s = score_run(run_)
+    assert s["false_positives"] == 0 and s["precision"] == 1.0
+    assert s["bugs_detected"] == len(manifest["bugs"]) and s["wrong_numbers_flagged"] == s["wrong_numbers_total"]
+
+
+def test_dimension_labels_resolve_case_insensitively():
+    from reportguard.metrics import compute_metric
+    conn = sqlite3.connect(config.DB_PATH)
+    assert compute_metric(conn, "CATEGORY_REVENUE", "2026-08", "electronics") == \
+        compute_metric(conn, "CATEGORY_REVENUE", "2026-08", "Electronics") > 0
+    with pytest.raises(ValueError, match="Valid values"):
+        compute_metric(conn, "CATEGORY_REVENUE", "2026-08", "Garden")
