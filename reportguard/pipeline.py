@@ -362,6 +362,27 @@ async def run_multi_agent(provider: Provider, pack: str = "buggy", period: str =
             result.consistency = _consistency(figures, result.checks)
             say(f"    {len(result.checks) - len(failed)} passed, {len(failed)} failed or errored")
 
+            # evidence for the investigator, gathered in code: other displayed figures for the same metric
+            by_figure = {c["figure_id"]: c for c in result.checks}
+            for group in result.consistency:
+                for f in group["figures"]:
+                    c = by_figure.get(f["figure_id"])
+                    if c is not None and c["result"]["status"] != "PASS":
+                        c["cross_figure"] = [o for o in group["figures"] if o["figure_id"] != f["figure_id"]]
+
+            # evidence for the investigator: the same metric shown somewhere else with a different value
+            cross = {}
+            for group in result.consistency:
+                for fig in group["figures"]:
+                    cross[fig["figure_id"]] = [o for o in group["figures"] if o["figure_id"] != fig["figure_id"]]
+            cross_hits = 0
+            for c in failed:
+                if c["figure_id"] in cross:
+                    c["cross_figure"] = cross[c["figure_id"]]
+                    cross_hits += 1
+            if cross_hits:
+                say(f"    cross-figure: {cross_hits} failing number(s) appear elsewhere with a different value")
+
             # evidence for the investigator, gathered in code: does a failing number match an adjacent month?
             adjacent_matches = 0
             for c in failed:

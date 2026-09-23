@@ -67,6 +67,17 @@ You receive checks that FAILED. For each one, find the most likely root cause an
 - Each failed check carries adjacent_periods: the same metric recomputed in code for the
   previous and next month. If one of them has status PASS, the reported number belongs to
   that month: that is wrong_period (or stale_data if a snapshot date explains it). Cite it.
+- A failed check may carry cross_figure: other displayed numbers for the same metric,
+  dimension and period, with their own status. If a chart label fails while a table showing
+  the same metric passes, on any page or tab, that is chart_table_mismatch.
+- Counting rows (lab tests, line items, visits) where the metric counts distinct entities
+  (patients, members, orders) is join_fanout: rows counted more than once.
+- Some failed checks carry cross_figure: the same metric shown somewhere else in the report,
+  with that figure's value and PASS/FAIL. If the other place matches the warehouse and this one
+  does not, the two disagree: for a chart label that is chart_table_mismatch, for a copied tile
+  it is a stale copy. Say which one is right.
+- join_fanout covers any count that counts rows instead of distinct things: line items instead
+  of orders, lab results instead of patients, encounters instead of members.
 - If a check comes back for a second look, it has critic_objection. Answer that objection
   directly, with SQL that reproduces the reported number, or give root_cause "other" with
   low confidence rather than repeat an unproven cause.

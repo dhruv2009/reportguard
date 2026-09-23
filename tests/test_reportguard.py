@@ -15,7 +15,7 @@ import pytest
 from reportguard import config
 from reportguard.cli import setup
 from reportguard.evals import score_run
-from reportguard.llm.base import LLMCache, ToolResult
+from reportguard.llm.base import LLMCache, Provider, ToolResult
 from reportguard.llm.gemini import GeminiProvider, to_gemini_schema
 from reportguard.llm.mock import MockChat, MockProvider
 from reportguard.llm.openai_compat import OpenAICompatProvider
@@ -517,3 +517,66 @@ def test_http_server_requires_bearer_token():
     refused = subprocess.run([sys.executable, str(config.PROJECT_ROOT / "run_server.py"), "--http"], env=env_public,
                              capture_output=True, text=True, timeout=60)
     assert refused.returncode == 1 and "RG_API_TOKEN" in refused.stderr
+
+
+class _ManifestChat:
+    """Stands in for a vision model: answers from the pack's answer key, so both the PDF and the
+    dashboard figures exist and cross-figure evidence can be exercised offline."""
+
+    def __init__(self, role, pack):
+        self.role, self.pack = role, pack
+
+    async def send(self, parts=None, tool_results=None):
+        from reportguard.llm.base import LLMTurn
+        text = "\n".join(p["text"] for p in (parts or []) if p["type"] == "text")
+        manifest = json.loads((config.MANIFEST_DIR / f"{self.pack}.json").read_text(encoding="utf-8"))
+        figs = manifest["figures"]
+        if self.role == "extractor":
+            out = {"figures": [{"figure_id": f"F{i + 1}", "artifact_id": f["artifact_id"], "location": f["location"],
+                                "label": f["label"], "displayed_text": f["displayed_text"], "value": f["value"],
+                                "unit_label": f["unit_label"], "display_decimals": f["decimals"],
+                                "period_label": f["period"], "notes": None} for i, f in enumerate(figs)],
+                   "security_notes": [], "unreadable": []}
+        elif self.role == "planner":
+            out = {"checks": [{"check_id": f"C{i + 1}", "figure_id": f"F{i + 1}", "metric_id": f["metric_id"],
+                               "dimension_value": f["dimension_value"], "period": f["period"], "reason": "stub"}
+                              for i, f in enumerate(figs)], "skipped": []}
+        elif self.role == "investigator":
+            failed = json.loads(text[text.index("Failed checks:") + len("Failed checks:"):].strip().split("\n\n")[0])
+            out = {"findings": [{"finding_id": f"R{i + 1}", "check_id": c["check_id"], "root_cause": "other",
+                                 "explanation": "stub", "evidence_sql": [], "evidence_summary": "",
+                                 "confidence": "high"} for i, c in enumerate(failed)]}
+        else:
+            items = json.loads(text[text.index("Findings to review:") + len("Findings to review:"):].strip().split("\n\n")[0])
+            out = {"verdicts": [{"finding_id": f["finding_id"], "verdict": "confirmed", "reason": "stub"}
+                                for f in items]}
+        return LLMTurn(text=json.dumps(out), tool_calls=[], usage={"input_tokens": 0, "output_tokens": 0})
+
+
+class ManifestProvider(Provider):
+    name, model, supports_vision = "stub", "manifest", True
+
+    def __init__(self, pack="buggy"):
+        self.pack = pack
+
+    def new_chat(self, system, tools):
+        import re as _re
+        return _ManifestChat(_re.match(r"You are the (\w+) agent", system).group(1), self.pack)
+
+
+def test_failed_checks_carry_cross_figure_evidence():
+    result = run(run_multi_agent(ManifestProvider(), "buggy", verbose=False))
+    assert result.error is None
+    flagged = [c for c in result.checks if c.get("cross_figure")]
+    assert flagged and all(c["result"]["status"] != "PASS" for c in flagged)
+    net = next(c for c in flagged if c["metric_id"] == "NET_REVENUE")
+    assert any(o["artifact_id"].endswith(".png") for o in net["cross_figure"])   # PDF net revenue vs dashboard tile
+    chart = next(c for c in flagged if c["metric_id"] == "CATEGORY_REVENUE")
+    assert any(o["status"] == "PASS" for o in chart["cross_figure"])             # chart label vs the table that matches
+
+
+def test_failed_checks_carry_adjacent_month_evidence():
+    result = run(run_multi_agent(ManifestProvider(), "buggy", verbose=False))
+    matched = [c["metric_id"] for c in result.checks
+               if any(e["status"] == "PASS" for e in c.get("adjacent_periods", []))]
+    assert matched == ["ACTIVE_CUSTOMERS"]                                       # the dashboard tile showing July
